@@ -14,6 +14,7 @@ import {
   Gauge,
   LayoutDashboard,
   Network,
+  Printer,
   Radio,
   RotateCcw,
   Search,
@@ -966,23 +967,92 @@ function Assistant({ onAsk }) {
 }
 
 function Reports({ dashboard, incidents, faults }) {
+  const generatedAt = new Date(dashboard.generatedAt);
+  const generatedLabel = Number.isNaN(generatedAt.getTime()) ? 'Unavailable' : generatedAt.toLocaleString();
+  const openIncidents = incidents.filter((incident) => incident.status !== 'RESOLVED').length;
+  const criticalFaults = faults.filter((fault) => fault.severity === 'critical').length;
+
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Panel title="Available exports">
-        <div className="space-y-3">
-          <ReportLink href="/api/reports/telemetry.csv" label="Telemetry history (CSV)" detail="Time series of simulated demand, voltage and frequency" />
+    <div className="print-report space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">GridPulse · Simulated operations</p>
+          <h1 className="mt-1 text-xl font-semibold text-slate-100">System status report</h1>
+          <p className="mt-1 text-xs text-slate-400">Snapshot generated {generatedLabel} · Synthetic data, not utility telemetry</p>
         </div>
+        <button onClick={() => window.print()} className="print-hide inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-cyan-200 hover:border-cyan-500">
+          <Printer size={16} aria-hidden="true" />
+          Print / Save as PDF
+        </button>
+      </div>
+
+      <div className="report-metrics grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <MetricCard label="Substations" value={dashboard.totalSubstations} icon={Network} />
+        <MetricCard label="Active feeders" value={dashboard.activeFeeders} icon={Radio} />
+        <MetricCard label="Active transformers" value={dashboard.activeTransformers} icon={Cpu} />
+        <MetricCard label="Average voltage" value={`${dashboard.averageVoltage} V`} icon={Gauge} />
+        <MetricCard label="Average frequency" value={`${dashboard.averageFrequency} Hz`} icon={Activity} />
+        <MetricCard label="Simulated power" value={`${dashboard.totalPowerConsumption} MW`} icon={Zap} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Panel title="Operational summary" className="print-avoid-break">
+          <div className="space-y-3 text-sm">
+            <DetailRow label="System reliability" value={`${dashboard.reliability}%`} />
+            <DetailRow label="Open incidents" value={openIncidents} />
+            <DetailRow label="Fault events" value={faults.length} />
+            <DetailRow label="Critical fault events" value={criticalFaults} />
+            <DetailRow label="Data source" value="Synthetic simulation" />
+          </div>
+        </Panel>
+        <Panel title="Available exports" className="print-hide">
+          <div className="space-y-3">
+            <ReportLink href="/api/reports/telemetry.csv" label="Telemetry history (CSV)" detail="Time series of simulated demand, voltage and frequency" />
+          </div>
+          <p className="mt-4 text-xs text-slate-500">The CSV contains the in-memory simulation history only; it is not utility telemetry.</p>
+        </Panel>
+      </div>
+
+      <Panel title="Recent fault events" className="print-avoid-break">
+        {faults.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-xs">
+              <thead className="text-slate-500"><tr><th className="py-2 pr-3">Detected</th><th className="py-2 pr-3">Equipment</th><th className="py-2 pr-3">Category</th><th className="py-2 pr-3">Severity</th><th className="py-2">Finding</th></tr></thead>
+              <tbody className="divide-y divide-slate-800">
+                {faults.slice(0, 15).map((fault) => (
+                  <tr key={fault.id}>
+                    <td className="py-2 pr-3 text-slate-400">{new Date(fault.timestamp).toLocaleString()}</td>
+                    <td className="py-2 pr-3 font-medium text-slate-200">{fault.equipment}</td>
+                    <td className="py-2 pr-3">{fault.category}</td>
+                    <td className="py-2 pr-3">{fault.severity}</td>
+                    <td className="py-2 text-slate-400">{fault.description}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <EmptyState>No fault events in the current simulation.</EmptyState>}
       </Panel>
-      <Panel title="Current report summary">
-        <div className="space-y-3 text-sm">
-          <DetailRow label="Report status" value="Snapshot summary" />
-          <DetailRow label="Substations" value={dashboard.totalSubstations} />
-          <DetailRow label="Feeders" value={dashboard.totalFeeders} />
-          <DetailRow label="Fault events" value={faults.length} />
-          <DetailRow label="Incidents" value={incidents.length} />
-          <DetailRow label="Data source" value="Synthetic simulation" />
-        </div>
-        <p className="mt-4 text-xs text-slate-500">CSV export contains actual in-memory simulation history only; data is not utility telemetry.</p>
+
+      <Panel title="Recent incidents" className="print-avoid-break">
+        {incidents.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-xs">
+              <thead className="text-slate-500"><tr><th className="py-2 pr-3">Created</th><th className="py-2 pr-3">Incident</th><th className="py-2 pr-3">Equipment</th><th className="py-2 pr-3">Severity / status</th><th className="py-2">Recommendation</th></tr></thead>
+              <tbody className="divide-y divide-slate-800">
+                {incidents.slice(0, 15).map((incident) => (
+                  <tr key={incident.id}>
+                    <td className="py-2 pr-3 text-slate-400">{new Date(incident.createdAt).toLocaleString()}</td>
+                    <td className="py-2 pr-3 font-medium text-slate-200">{incident.id}</td>
+                    <td className="py-2 pr-3">{incident.equipment}</td>
+                    <td className="py-2 pr-3">{incident.severity} / {incident.status}</td>
+                    <td className="py-2 text-slate-400">{incident.recommendation}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <EmptyState>No incidents recorded in the current simulation.</EmptyState>}
       </Panel>
     </div>
   );
