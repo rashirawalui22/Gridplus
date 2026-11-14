@@ -48,7 +48,8 @@ With MongoDB and a valid `JWT_SECRET`, new accounts are stored with bcrypt-hashe
 - Incident lifecycle (`OPEN` → `ACKNOWLEDGED` → `INVESTIGATING` → `RESOLVED`) with appended status history.
 - Hypothetical outage/load/voltage scenarios with estimated affected load, consumers, and alternate capacity.
 - Transparent, statistical 1–24 hour load baseline; no unvalidated predictive-AI claims.
-- Data-grounded rule-based assistant, CSV export, input validation, CORS allow-list, security headers, API rate limiting, and error responses.
+- Data-grounded rule-based assistant, telemetry CSV export, and a print-ready system report that can be saved as PDF from the browser.
+- Input validation, CORS allow-list, security headers, API rate limiting, and safe error responses.
 - Mongoose schemas for users, network equipment, telemetry, faults, incidents, scenarios, audit logs, and simulation configuration. Mongo persistence is optional; telemetry retention uses a 90-day TTL index and writes are throttled.
 - Optional Mongo-backed JWT authentication with bcrypt password hashes, viewer/operator/admin roles, per-request role lookup, token revocation on logout, and protected REST/Socket.IO access.
 - Docker Compose for the app and MongoDB, GitHub Actions validation, and an OpenAPI contract at `docs/openapi.yaml`.
@@ -81,5 +82,5 @@ Authentication is enabled only when MongoDB is connected and `JWT_SECRET` is con
 
 - Demo data and all scenario consumer/load estimates are synthetic assumptions, not engineering or operational recommendations.
 - The statistical forecast is a baseline without validated accuracy/error metrics.
-- The application has no external LLM integration, Redis cache, or PDF report export yet.
+- The application has no external LLM integration or Redis cache; PDF output uses the browser's print-to-PDF flow rather than a server-generated PDF.
 - Database and auth behavior require a reachable MongoDB instance and are not exercised by the in-memory unit suite.

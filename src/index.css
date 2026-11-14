@@ -67,3 +67,71 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html, body, #root {
+    min-width: 0 !important;
+    background: #fff !important;
+    color: #111827 !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .print-report,
+  .print-report * {
+    visibility: visible !important;
+    color: #111827 !important;
+  }
+
+  .print-report {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .print-report * {
+    border-color: #d1d5db !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  .print-report .print-hide {
+    display: none !important;
+  }
+
+  .print-report .print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-report .report-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .print-report .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  .print-report table {
+    width: 100% !important;
+    min-width: 0 !important;
+    font-size: 9pt !important;
+  }
+
+  .print-report thead {
+    display: table-header-group;
+  }
+
+  .print-report tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
