@@ -1,64 +1,77 @@
-import { defaultConfiguration, initialTelemetry, transformers, feeders, substations } from '../data/mockData.js';
+import {
+  defaultConfiguration,
+  feeders as feederSeed,
+  initialTelemetry,
+  substations,
+  transformers as transformerSeed,
+} from '../data/mockData.js';
 
-export function buildSimulationSnapshot(configuration = defaultConfiguration) {
-  const now = new Date();
-  const telemetry = initialTelemetry.map((reading, index) => {
-    const swing = (index % 2 === 0 ? 1 : -1) * (Math.random() * 1.4);
-    const adjustedVoltage = Number((reading.voltage + swing).toFixed(1));
-    const adjustedFrequency = Number((reading.frequency + swing * 0.03).toFixed(2));
-    const adjustedCurrent = Number((reading.current + Math.random() * 12).toFixed(1));
-    const adjustedLoad = Math.max(35, Math.min(98, reading.loadPercent + (Math.random() * 9 - 4)));
+export function buildSimulationSnapshot(configuration = defaultConfiguration, telemetry = initialTelemetry) {
+  const readings = telemetry.map((reading) => ({ ...reading }));
+  const feederById = new Map(readings.map((reading) => [reading.feederId, reading]));
+  const transformerById = new Map(readings.map((reading) => [reading.transformerId, reading]));
+  const average = (selector) => readings.length
+    ? readings.reduce((sum, item) => sum + selector(item), 0) / readings.length
+    : 0;
+  const healthyCount = readings.filter((item) => item.status === 'normal').length;
+  const reliability = readings.length ? (healthyCount / readings.length) * 100 : 100;
 
+  const currentFeeders = feederSeed.map((feeder) => {
+    const reading = feederById.get(feeder.id);
+    if (!reading) return { ...feeder };
     return {
-      ...reading,
-      timestamp: now.toISOString(),
-      voltage: Math.min(Math.max(adjustedVoltage, 210), 250),
-      current: adjustedCurrent,
-      frequency: Math.min(Math.max(adjustedFrequency, 59.3), 60.4),
-      activePower: Number((reading.activePower + Math.random() * 5 - 2).toFixed(1)),
-      reactivePower: Number((reading.reactivePower + Math.random() * 3 - 1.5).toFixed(1)),
-      loadPercent: Number(adjustedLoad.toFixed(0)),
-      status: adjustedLoad >= configuration.overloadPercent ? 'warning' : 'normal',
+      ...feeder,
+      voltage: reading.voltage,
+      current: reading.current,
+      frequency: reading.frequency,
+      activePower: reading.activePower,
+      reactivePower: reading.reactivePower,
+      loadPercent: reading.loadPercent,
+      status: reading.status,
     };
   });
 
-  const dashboard = {
-    totalFeeders: feeders.length,
-    activeTransformers: transformers.filter((item) => item.status !== 'offline').length,
-    healthyEquipment: transformers.filter((item) => item.status === 'normal').length,
-    criticalAlerts: 2,
-    averageVoltage: Number((telemetry.reduce((sum, item) => sum + item.voltage, 0) / telemetry.length).toFixed(1)),
-    averageFrequency: Number((telemetry.reduce((sum, item) => sum + item.frequency, 0) / telemetry.length).toFixed(2)),
-    totalPowerConsumption: Number(telemetry.reduce((sum, item) => sum + item.activePower, 0).toFixed(1)),
-    reliability: Number((substations.reduce((sum, s) => sum + s.reliability, 0) / substations.length).toFixed(1)),
-  };
+  const currentTransformers = transformerSeed.map((transformer) => {
+    const reading = transformerById.get(transformer.id);
+    if (!reading) return { ...transformer };
+    return {
+      ...transformer,
+      currentLoadMVA: Number((transformer.ratingMVA * reading.loadPercent / 100).toFixed(1)),
+      loadPercent: reading.loadPercent,
+      voltage: reading.voltage,
+      status: reading.status === 'critical' ? 'critical' : reading.loadPercent >= configuration.overloadPercent ? 'overload' : 'normal',
+    };
+  });
 
   return {
-    dashboard,
-    telemetry,
-    transformers: transformers.map((item) => {
-      const match = telemetry.find((reading) => reading.transformerId === item.id);
-      return {
-        ...item,
-        currentLoadMVA: match ? Number((match.activePower / 3).toFixed(1)) : item.currentLoadMVA,
-        loadPercent: match ? match.loadPercent : item.loadPercent,
-        voltage: match ? match.voltage : item.voltage,
-        status: match && match.loadPercent >= configuration.overloadPercent ? 'overload' : 'normal',
-      };
-    }),
-    feeders: feeders.map((item) => {
-      const match = telemetry.find((reading) => reading.feederId === item.id);
-      return {
-        ...item,
-        voltage: match ? match.voltage : item.voltage,
-        current: match ? match.current : item.current,
-        frequency: match ? match.frequency : item.frequency,
-        activePower: match ? match.activePower : item.activePower,
-        reactivePower: match ? match.reactivePower : item.reactivePower,
-        loadPercent: match ? match.loadPercent : item.loadPercent,
-        status: match && match.loadPercent >= configuration.overloadPercent ? 'warning' : 'normal',
-      };
-    }),
-    substations,
+    generatedAt: readings[0]?.timestamp ?? new Date().toISOString(),
+    dashboard: {
+      totalFeeders: currentFeeders.length,
+      totalSubstations: substations.length,
+      activeFeeders: currentFeeders.filter((item) => item.status !== 'critical').length,
+      activeTransformers: currentTransformers.filter((item) => item.status !== 'offline').length,
+      healthyEquipment: healthyCount,
+      criticalAlerts: readings.filter((item) => item.status === 'critical').length,
+      averageVoltage: Number(average((item) => item.voltage).toFixed(1)),
+      averageFrequency: Number(average((item) => item.frequency).toFixed(2)),
+      totalPowerConsumption: Number(readings.reduce((sum, item) => sum + item.activePower, 0).toFixed(1)),
+      reliability: Number(reliability.toFixed(1)),
+    },
+    telemetry: readings,
+    transformers: currentTransformers,
+    feeders: currentFeeders,
+    substations: substations.map((item) => ({ ...item })),
   };
+}
+
+export function createInitialTelemetry() {
+  const timestamp = new Date().toISOString();
+  return initialTelemetry.map((reading) => ({
+    ...reading,
+    timestamp,
+    normalActivePower: reading.activePower,
+    normalLoadPercent: reading.loadPercent,
+    normalVoltage: reading.voltage,
+    status: 'normal',
+  }));
 }

@@ -1,143 +1,110 @@
-import express from 'express';
-import cors from 'cors';
-import path from 'path';
-import fs from 'fs';
-import mongoose from 'mongoose';
-import { fileURLToPath } from 'url';
+import http from 'node:http';
+import { Server as SocketServer } from 'socket.io';
+import { createApp } from './app.js';
 import { config } from './config/env.js';
-import { buildSimulationSnapshot } from './services/simulationService.js';
-import { defaultConfiguration, alertHistory, faults } from './data/mockData.js';
-import { evaluateTelemetry } from './services/faultDetectionService.js';
+import { AuthService } from './services/authService.js';
+import { IncidentService } from './services/incidentService.js';
+import { PersistenceService } from './services/persistenceService.js';
+import { SimulationEngine } from './services/simulationEngine.js';
+import { logger } from './utils/logger.js';
 
-const app = express();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const engine = new SimulationEngine();
+const incidents = new IncidentService();
+const persistence = new PersistenceService(config.mongoUri);
+await persistence.connect();
+const auth = new AuthService({
+  secret: config.jwtSecret,
+  enabled: persistence.status === 'connected',
+  expiresIn: config.jwtExpiresIn,
+  adminEmail: config.adminEmail,
+});
+if (persistence.status === 'connected' && !auth.status.enabled) {
+  logger.warn('Authentication disabled because JWT_SECRET must contain at least 32 characters');
+}
+if (persistence.status === 'connected') {
+  try {
+    const savedConfiguration = await persistence.loadConfiguration();
+    if (savedConfiguration) engine.setConfiguration(savedConfiguration);
+    incidents.hydrate(await persistence.loadIncidents());
+    engine.hydrateFaults(await persistence.loadFaults());
+  } catch (error) {
+    logger.warn('Could not load persisted event history; continuing in memory mode', { reason: error.message });
+  }
+}
+const { app } = createApp({
+  engine,
+  incidents,
+  persistence,
+  auth,
+  allowedOrigin: config.frontendOrigin,
+});
+const server = http.createServer(app);
+const io = new SocketServer(server, {
+  cors: {
+    origin: config.frontendOrigin,
+    methods: ['GET', 'POST'],
+  },
+});
 
-app.use(cors());
-app.use(express.json());
+io.use((socket, next) => {
+  if (!auth.status.enabled) return next();
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('Authentication is required.'));
+  return auth.authenticateToken(token)
+    .then((user) => {
+      socket.data.user = user;
+      next();
+    })
+    .catch(next);
+});
 
-let simulationConfig = { ...defaultConfiguration };
-let state = buildSimulationSnapshot(simulationConfig);
-let alerts = [...alertHistory];
-let faultLog = [...faults];
-let simulationRunning = true;
+engine.on('snapshot', (snapshot) => io.emit('telemetry:snapshot', snapshot));
+engine.on('status', (status) => io.emit('simulation:status', status));
+engine.on('alerts', (alerts) => io.emit('alerts:update', alerts));
+engine.on('snapshot', (snapshot) => {
+  persistence.persistSnapshot(snapshot).catch((error) => {
+    logger.error('Could not persist telemetry snapshot', { reason: error.message });
+  });
+});
+engine.on('fault', (fault) => {
+  const incident = incidents.createFromFault(fault);
+  persistence.persistFault(fault).catch((error) => {
+    logger.error('Could not persist fault event', { id: fault.id, reason: error.message });
+  });
+  if (incident) {
+    persistence.persistIncident(incident, 'incident.created').catch((error) => {
+      logger.error('Could not persist incident', { id: incident.id, reason: error.message });
+    });
+  }
+  io.emit('fault:new', fault);
+  if (incident) io.emit('incident:new', incident);
+});
+engine.on('fault:update', (fault) => {
+  persistence.persistFault(fault).catch((error) => {
+    logger.error('Could not update persisted fault', { id: fault.id, reason: error.message });
+  });
+});
 
-if (config.mongoUri) {
-  mongoose.connect(config.mongoUri)
-    .then(() => console.log('MongoDB connected'))
-    .catch((error) => console.warn('MongoDB unavailable, using synthetic simulator mode:', error.message));
+io.on('connection', (socket) => {
+  socket.emit('telemetry:snapshot', engine.getSnapshot());
+  socket.emit('simulation:status', engine.getStatus());
+});
+
+server.on('error', (error) => {
+  logger.error('GridPulse API server failed to bind', { code: error.code, port: config.port, reason: error.message });
+  process.exit(1);
+});
+
+server.listen(config.port, '0.0.0.0', () => {
+  engine.start();
+  logger.info('GridPulse API listening', { port: config.port, database: persistence.status });
+});
+
+function shutdown() {
+  engine.pause();
+  io.close();
+  server.close(() => process.exit(0));
 }
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', label: 'GridPulse simulation engine online', simulated: true });
-});
-
-app.get('/api/dashboard', (_req, res) => {
-  const snapshot = buildSimulationSnapshot(simulationConfig);
-  const computedFaults = evaluateTelemetry(snapshot.telemetry, simulationConfig);
-  state = snapshot;
-  faultLog = [...faultLog, ...computedFaults].slice(-24);
-  res.json({
-    ...snapshot.dashboard,
-    alerts: alerts.length,
-    faultCount: faultLog.length,
-    telemetry: snapshot.telemetry,
-  });
-});
-
-app.get('/api/feeders', (_req, res) => {
-  res.json(state.feeders);
-});
-
-app.get('/api/transformers', (_req, res) => {
-  res.json(state.transformers);
-});
-
-app.get('/api/substations', (_req, res) => {
-  res.json(state.substations);
-});
-
-app.get('/api/faults', (_req, res) => {
-  res.json(faultLog);
-});
-
-app.get('/api/alerts', (_req, res) => {
-  res.json(alerts);
-});
-
-app.get('/api/settings', (_req, res) => {
-  res.json({ thresholds: simulationConfig, simulationRunning });
-});
-
-app.post('/api/settings', (req, res) => {
-  const { voltageMin, voltageMax, frequencyMin, frequencyMax, overloadPercent, telemetryGapSeconds, powerDeviationPercent } = req.body;
-  const next = {
-    ...simulationConfig,
-    ...(voltageMin !== undefined ? { voltageMin: Number(voltageMin) } : {}),
-    ...(voltageMax !== undefined ? { voltageMax: Number(voltageMax) } : {}),
-    ...(frequencyMin !== undefined ? { frequencyMin: Number(frequencyMin) } : {}),
-    ...(frequencyMax !== undefined ? { frequencyMax: Number(frequencyMax) } : {}),
-    ...(overloadPercent !== undefined ? { overloadPercent: Number(overloadPercent) } : {}),
-    ...(telemetryGapSeconds !== undefined ? { telemetryGapSeconds: Number(telemetryGapSeconds) } : {}),
-    ...(powerDeviationPercent !== undefined ? { powerDeviationPercent: Number(powerDeviationPercent) } : {}),
-  };
-
-  simulationConfig = next;
-  state = buildSimulationSnapshot(simulationConfig);
-  res.json({ thresholds: simulationConfig, simulationRunning });
-});
-
-app.post('/api/alerts/:id/ack', (req, res) => {
-  const { id } = req.params;
-  alerts = alerts.map((alert) => (
-    alert.id === id ? { ...alert, acknowledged: true, status: 'acknowledged' } : alert
-  ));
-  res.json(alerts);
-});
-
-app.post('/api/simulation/toggle', (req, res) => {
-  simulationRunning = Boolean(req.body.running);
-  res.json({ simulationRunning });
-});
-
-app.get('/api/telemetry', (_req, res) => {
-  res.json(state.telemetry);
-});
-
-app.get('/api/historical', (_req, res) => {
-  res.json(state.telemetry);
-});
-
-app.post('/api/auth/login', (_req, res) => {
-  res.json({
-    user: {
-      id: 'user-ops-01',
-      name: 'Control Room Operator',
-      role: 'Distribution Supervisory Desk',
-      simulated: true,
-    },
-    token: 'simulated-token',
-  });
-});
-
-app.get('/api/users/me', (_req, res) => {
-  res.json({
-    id: 'user-ops-01',
-    name: 'Control Room Operator',
-    role: 'Distribution Supervisory Desk',
-    simulated: true,
-  });
-});
-
-const distPath = path.join(__dirname, '..', 'dist');
-if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-}
-
-const port = config.port;
-app.listen(port, () => {
-  console.log(`GridPulse API listening on http://localhost:${port}`);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

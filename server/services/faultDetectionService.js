@@ -1,96 +1,74 @@
 import { defaultConfiguration } from '../data/mockData.js';
 
-export function evaluateTelemetry(telemetry, config = defaultConfiguration) {
+const guidance = {
+  'under-voltage': 'Inspect load balance and verify feeder regulator response.',
+  'over-voltage': 'Review reactive support and inspect tap changer operation.',
+  'frequency-deviation': 'Assess generation balance and confirm interconnection stability.',
+  'transformer-overload': 'Shift demand to alternate feeders and inspect cooling systems.',
+  'abnormal-power': 'Review feeder loading and verify metering calibration.',
+  'sudden-load-spike': 'Check for switched loads and validate metering before rebalancing.',
+  'telemetry-gap': 'Check communications, device power and the last successful measurement.',
+};
+
+function makeIssue(reading, category, score, detail) {
+  return {
+    key: `${category}:${reading.feederId || reading.transformerId}`,
+    category,
+    severity: score >= 2 ? 'critical' : 'warning',
+    anomalyScore: Number(score.toFixed(2)),
+    equipment: category === 'transformer-overload' ? reading.transformerId : reading.feederId,
+    timestamp: reading.timestamp,
+    description: detail,
+    recommendation: guidance[category],
+    acknowledged: false,
+  };
+}
+
+export function evaluateTelemetry(telemetry, configuration = defaultConfiguration, previousTelemetry = []) {
   const issues = [];
-  const seen = new Set();
+  const previousByFeeder = new Map(previousTelemetry.map((reading) => [reading.feederId, reading]));
 
   for (const reading of telemetry) {
-    const keyBase = `${reading.feederId}-${reading.transformerId}`;
+    const voltageRange = Math.max(configuration.voltageMax - configuration.voltageMin, 1);
+    if (reading.voltage < configuration.voltageMin) {
+      const ratio = (configuration.voltageMin - reading.voltage) / voltageRange;
+      issues.push(makeIssue(reading, 'under-voltage', 1 + ratio, `Voltage measured ${reading.voltage}V, below the configured ${configuration.voltageMin}V limit.`));
+    }
 
-    if (reading.voltage < config.voltageMin) {
-      const key = `${keyBase}-voltage-low`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        issues.push({
-          id: `fault-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-          category: 'under-voltage',
-          severity: reading.voltage < config.voltageMin * 0.96 ? 'critical' : 'warning',
-          equipment: reading.feederId,
-          timestamp: reading.timestamp,
-          description: `Voltage for ${reading.feederName} fell below ${config.voltageMin}V.`,
-          recommendation: 'Inspect load balance and verify feeder regulator response.',
-          acknowledged: false,
-        });
+    if (reading.voltage > configuration.voltageMax) {
+      const ratio = (reading.voltage - configuration.voltageMax) / voltageRange;
+      issues.push(makeIssue(reading, 'over-voltage', 1 + ratio, `Voltage measured ${reading.voltage}V, above the configured ${configuration.voltageMax}V limit.`));
+    }
+
+    if (reading.frequency < configuration.frequencyMin || reading.frequency > configuration.frequencyMax) {
+      const deviation = reading.frequency < configuration.frequencyMin
+        ? configuration.frequencyMin - reading.frequency
+        : reading.frequency - configuration.frequencyMax;
+      issues.push(makeIssue(reading, 'frequency-deviation', 1 + deviation / 0.1, `Frequency measured ${reading.frequency}Hz, outside the configured ${configuration.frequencyMin}–${configuration.frequencyMax}Hz range.`));
+    }
+
+    if (reading.loadPercent >= configuration.overloadPercent) {
+      const excess = reading.loadPercent - configuration.overloadPercent;
+      issues.push(makeIssue(reading, 'transformer-overload', 1 + excess / 8, `${reading.transformerName} is loaded to ${reading.loadPercent}%, at or above the configured ${configuration.overloadPercent}% limit.`));
+    }
+
+    const expectedPower = reading.normalActivePower;
+    if (Number.isFinite(expectedPower) && expectedPower > 0) {
+      const deviation = Math.abs(reading.activePower - expectedPower) / expectedPower;
+      if (deviation * 100 >= configuration.powerDeviationPercent) {
+        issues.push(makeIssue(reading, 'abnormal-power', 1 + deviation, `Active power is ${Number((deviation * 100).toFixed(1))}% from the simulated feeder baseline.`));
       }
     }
 
-    if (reading.voltage > config.voltageMax) {
-      const key = `${keyBase}-voltage-high`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        issues.push({
-          id: `fault-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-          category: 'over-voltage',
-          severity: reading.voltage > config.voltageMax * 1.04 ? 'critical' : 'warning',
-          equipment: reading.feederId,
-          timestamp: reading.timestamp,
-          description: `Voltage for ${reading.feederName} exceeded ${config.voltageMax}V.`,
-          recommendation: 'Review reactive support and inspect tap changer operation.',
-          acknowledged: false,
-        });
-      }
+    const previous = previousByFeeder.get(reading.feederId);
+    if (previous?.loadPercent > 0 && reading.loadPercent - previous.loadPercent >= configuration.loadSpikePercent) {
+      const delta = reading.loadPercent - previous.loadPercent;
+      issues.push(makeIssue(reading, 'sudden-load-spike', 1 + delta / configuration.loadSpikePercent, `Feeder load rose ${delta.toFixed(0)} percentage points in one simulation update.`));
     }
 
-    if (reading.frequency < config.frequencyMin || reading.frequency > config.frequencyMax) {
-      const key = `${keyBase}-frequency`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        issues.push({
-          id: `fault-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-          category: 'frequency-deviation',
-          severity: Math.abs(reading.frequency - 60) > 0.35 ? 'critical' : 'warning',
-          equipment: reading.feederId,
-          timestamp: reading.timestamp,
-          description: `Frequency drift for ${reading.feederName} exceeded the configured window.`,
-          recommendation: 'Assess generation balance and confirm system interconnection stability.',
-          acknowledged: false,
-        });
-      }
-    }
-
-    if (reading.loadPercent >= config.overloadPercent) {
-      const key = `${keyBase}-load`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        issues.push({
-          id: `fault-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-          category: 'transformer-overload',
-          severity: reading.loadPercent > config.overloadPercent + 8 ? 'critical' : 'warning',
-          equipment: reading.transformerId,
-          timestamp: reading.timestamp,
-          description: `Transformer ${reading.transformerName} is operating at ${reading.loadPercent}% of rated load.`,
-          recommendation: 'Shift demand to alternate feeders and inspect cooling systems.',
-          acknowledged: false,
-        });
-      }
-    }
-
-    const activePowerDeviation = Math.abs(reading.activePower - 50) / 50;
-    if (activePowerDeviation * 100 > config.powerDeviationPercent) {
-      const key = `${keyBase}-power`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        issues.push({
-          id: `fault-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-          category: 'abnormal-power',
-          severity: activePowerDeviation > 0.5 ? 'critical' : 'warning',
-          equipment: reading.feederId,
-          timestamp: reading.timestamp,
-          description: `Power draw deviates materially from the expected operating envelope on ${reading.feederName}.`,
-          recommendation: 'Review feeder loading and verify metering calibration.',
-          acknowledged: false,
-        });
-      }
+    const ageSeconds = (Date.now() - new Date(reading.timestamp).getTime()) / 1000;
+    if (Number.isFinite(ageSeconds) && ageSeconds > configuration.telemetryGapSeconds) {
+      issues.push(makeIssue(reading, 'telemetry-gap', 1 + ageSeconds / configuration.telemetryGapSeconds, `No telemetry update has been received for ${Math.floor(ageSeconds)} seconds.`));
     }
   }
 
