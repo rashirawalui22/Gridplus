@@ -12,6 +12,7 @@
     "client": "vite",
     "build": "vite build",
     "test": "node --test",
+    "test:integration": "node --test server/integration-tests/workflow.integration.js",
     "start": "node server/index.js",
     "preview": "vite preview --host 0.0.0.0"
   },

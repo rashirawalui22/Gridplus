@@ -58,6 +58,13 @@ export class IncidentService {
   }
 
   transition(id, status, actor = 'operator') {
+    const updated = this.prepareTransition(id, status, actor);
+    if (!updated) return null;
+    this.commit(updated);
+    return updated;
+  }
+
+  prepareTransition(id, status, actor = 'operator') {
     const incident = this.incidents.find((item) => item.id === id);
     if (!incident) return null;
     if (!statuses.includes(status) || !nextStatus.get(incident.status).has(status)) {
@@ -67,9 +74,18 @@ export class IncidentService {
     }
 
     const timestamp = new Date().toISOString();
-    incident.status = status;
-    incident.updatedAt = timestamp;
-    incident.auditHistory.push({ status, actor, timestamp });
+    return {
+      ...incident,
+      status,
+      updatedAt: timestamp,
+      auditHistory: [...incident.auditHistory, { status, actor, timestamp }],
+    };
+  }
+
+  commit(incident) {
+    const index = this.incidents.findIndex((item) => item.id === incident.id);
+    if (index === -1) return null;
+    this.incidents[index] = incident;
     return incident;
   }
 }
