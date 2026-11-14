@@ -1,0 +1,210 @@
+openapi: 3.1.0
+info:
+  title: GridPulse Simulation API
+  version: 2.0.0
+  description: REST and event-based API for synthetic distribution network telemetry. No actual utility systems are connected.
+servers:
+  - url: http://localhost:4000
+tags:
+  - name: Monitoring
+  - name: Simulation
+  - name: Incidents
+  - name: Analytics
+  - name: Authentication
+paths:
+  /api/health:
+    get:
+      tags: [Monitoring]
+      summary: Read API, simulation, and optional database status
+      responses:
+        "200":
+          description: Health snapshot
+  /api/dashboard:
+    get:
+      tags: [Monitoring]
+      summary: Read a consistent simulated dashboard snapshot
+      responses:
+        "200":
+          description: Dashboard metrics and current synthetic telemetry
+  /api/snapshot:
+    get:
+      tags: [Monitoring]
+      summary: Read a consistent combined network, incident, alert, and settings snapshot
+      responses:
+        "200":
+          description: A single synthetic application snapshot
+  /api/feeders:
+    get:
+      tags: [Monitoring]
+      summary: List simulated feeders
+      responses:
+        "200":
+          description: Feeder snapshot
+  /api/transformers:
+    get:
+      tags: [Monitoring]
+      summary: List simulated transformers
+      responses:
+        "200":
+          description: Transformer snapshot
+  /api/telemetry:
+    get:
+      tags: [Monitoring]
+      summary: Read current synthetic telemetry
+      responses:
+        "200":
+          description: Telemetry array
+  /api/historical:
+    get:
+      tags: [Monitoring]
+      summary: Read paginated telemetry history
+      parameters:
+        - in: query
+          name: feederId
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Paginated telemetry history
+  /api/simulation/start:
+    post:
+      tags: [Simulation]
+      summary: Start or resume simulation
+      responses:
+        "200":
+          description: Simulation state
+        "401":
+          description: Authentication required when enabled
+  /api/simulation/pause:
+    post:
+      tags: [Simulation]
+      summary: Pause simulation
+      responses:
+        "200":
+          description: Simulation state
+  /api/simulation/reset:
+    post:
+      tags: [Simulation]
+      summary: Reset simulated state and histories
+      responses:
+        "200":
+          description: Simulation state
+  /api/incidents:
+    get:
+      tags: [Incidents]
+      summary: Search, filter, and paginate incident records
+      parameters:
+        - in: query
+          name: severity
+          schema: { type: string, enum: [critical, warning, informational] }
+        - in: query
+          name: status
+          schema: { type: string, enum: [OPEN, ACKNOWLEDGED, INVESTIGATING, RESOLVED] }
+        - in: query
+          name: search
+          schema: { type: string }
+      responses:
+        "200":
+          description: Paginated incident list
+  /api/incidents/{id}/status:
+    patch:
+      tags: [Incidents]
+      summary: Advance an incident through its allowed lifecycle
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [ACKNOWLEDGED, INVESTIGATING, RESOLVED] }
+      responses:
+        "200":
+          description: Updated incident and appended audit entry
+        "409":
+          description: Invalid lifecycle transition
+  /api/scenarios:
+    post:
+      tags: [Simulation]
+      summary: Calculate and apply a hypothetical outage, load, or voltage scenario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetId, mode]
+              properties:
+                targetId: { type: string }
+                mode: { type: string, enum: [outage, load, voltage] }
+                loadDeltaPercent: { type: number, minimum: -100, maximum: 125 }
+                voltageDelta: { type: number, minimum: -120, maximum: 120 }
+      responses:
+        "201":
+          description: Hypothetical impact estimate
+        "400":
+          description: Invalid scenario input
+  /api/forecast:
+    get:
+      tags: [Analytics]
+      summary: Generate a transparent synthetic statistical demand forecast
+      parameters:
+        - in: query
+          name: hours
+          schema: { type: integer, enum: [1, 3, 6, 12, 24], default: 24 }
+      responses:
+        "200":
+          description: Forecast baseline and synthetic forecast points
+  /api/assistant/query:
+    post:
+      tags: [Analytics]
+      summary: Ask a deterministic question over current simulated application data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "200":
+          description: Answer with evidence from application state
+  /api/reports/telemetry.csv:
+    get:
+      tags: [Analytics]
+      summary: Export simulated telemetry history as CSV
+      responses:
+        "200":
+          description: CSV attachment
+          content:
+            text/csv:
+              schema: { type: string }
+  /api/auth/status:
+    get:
+      tags: [Authentication]
+      summary: Report whether configured JWT authentication is enabled
+      responses:
+        "200":
+          description: Authentication mode
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Authenticate a MongoDB user and issue a JWT
+      responses:
+        "200":
+          description: User and access token
+        "401":
+          description: Invalid credentials

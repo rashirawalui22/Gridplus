@@ -6,6 +6,8 @@ export const defaultConfiguration = {
   overloadPercent: 92,
   telemetryGapSeconds: 90,
   powerDeviationPercent: 28,
+  loadSpikePercent: 20,
+  tickIntervalMs: 3000,
 };
 
 export const initialTelemetry = [
