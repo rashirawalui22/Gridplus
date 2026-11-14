@@ -203,8 +203,121 @@ paths:
     post:
       tags: [Authentication]
       summary: Authenticate a MongoDB user and issue a JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10 }
       responses:
         "200":
           description: User and access token
         "401":
           description: Invalid credentials
+  /api/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register a viewer account; submitted roles are ignored
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 120 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10, maxLength: 128 }
+      responses:
+        "201":
+          description: Viewer account and access token
+        "409":
+          description: Email is already registered
+  /api/auth/bootstrap-admin:
+    post:
+      tags: [Authentication]
+      summary: Provision the first administrator using the one-time bootstrap secret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, bootstrapSecret]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 120 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10, maxLength: 128 }
+                bootstrapSecret: { type: string, minLength: 32, writeOnly: true }
+      responses:
+        "201":
+          description: Initial administrator and access token
+        "403":
+          description: Bootstrap secret is invalid
+        "409":
+          description: Bootstrap has already been used
+  /api/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Read the authenticated user profile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: User profile
+        "401":
+          description: Missing, invalid, expired, or revoked token
+  /api/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke the current access token
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204":
+          description: Token revoked
+        "401":
+          description: Missing, invalid, expired, or revoked token
+  /api/auth/users:
+    get:
+      tags: [Authentication]
+      summary: List users (administrator only)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: User list
+        "403":
+          description: Administrator role required
+  /api/auth/users/{id}/role:
+    patch:
+      tags: [Authentication]
+      summary: Change another user's role (administrator only)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [ADMIN, OPERATOR, VIEWER] }
+      responses:
+        "200":
+          description: Updated user
+        "403":
+          description: Administrator role required or self-role change attempted
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

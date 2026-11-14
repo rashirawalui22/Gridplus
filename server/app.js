@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answerGridQuestion } from './services/assistantService.js';
 import { AuthService } from './services/authService.js';
+import { sanitizeMongoError } from './config/mongoUri.js';
 import { forecastDemand } from './services/forecastService.js';
 import { IncidentService } from './services/incidentService.js';
 import { createScenario } from './services/scenarioService.js';
@@ -99,6 +100,13 @@ export function createApp({
       return next(error);
     }
   });
+  app.post('/api/auth/bootstrap-admin', authRateLimit, async (req, res, next) => {
+    try {
+      return res.status(201).json(await auth.bootstrapAdmin(req.body));
+    } catch (error) {
+      return next(error);
+    }
+  });
   app.post('/api/auth/login', authRateLimit, async (req, res, next) => {
     try {
       return res.json(await auth.login(req.body));
@@ -122,7 +130,7 @@ export function createApp({
   });
   app.patch('/api/auth/users/:id/role', adminOnly, async (req, res, next) => {
     try {
-      return res.json(await auth.updateRole(req.params.id, req.body?.role));
+      return res.json(await auth.updateRole(req.params.id, req.body?.role, req.user?.id));
     } catch (error) {
       return next(error);
     }
@@ -200,9 +208,9 @@ export function createApp({
   app.put('/api/settings', adminOnly, async (req, res, next) => {
     try {
       const updated = validateThresholds(req.body, engine.configuration);
+      await persistence?.persistConfiguration(updated);
       engine.setConfiguration(updated);
       if (req.body.tickIntervalMs !== undefined) engine.setIntervalMs(updated.tickIntervalMs);
-      await persistence?.persistConfiguration(engine.configuration);
       return res.json({ thresholds: engine.configuration, simulation: engine.getStatus() });
     } catch (error) {
       return next(error);
@@ -211,9 +219,9 @@ export function createApp({
   app.post('/api/settings', adminOnly, async (req, res, next) => {
     try {
       const updated = validateThresholds(req.body, engine.configuration);
+      await persistence?.persistConfiguration(updated);
       engine.setConfiguration(updated);
       if (req.body.tickIntervalMs !== undefined) engine.setIntervalMs(updated.tickIntervalMs);
-      await persistence?.persistConfiguration(engine.configuration);
       return res.json({ thresholds: engine.configuration, simulation: engine.getStatus() });
     } catch (error) {
       return next(error);
@@ -221,10 +229,12 @@ export function createApp({
   });
 
   app.post('/api/alerts/:id/ack', operatorOnly, async (req, res, next) => {
-    const alert = engine.acknowledgeAlert(req.params.id);
-    if (!alert) return res.status(404).json({ error: 'Alert not found.' });
     try {
-      await persistence?.persistFault(alert);
+      const previous = engine.getAlerts().find((item) => item.id === req.params.id);
+      if (!previous) return res.status(404).json({ error: 'Alert not found.' });
+      await persistence?.persistFault({ ...previous, acknowledged: true, status: 'acknowledged' });
+      const alert = engine.acknowledgeAlert(req.params.id);
+      if (!alert) return res.status(404).json({ error: 'Alert not found.' });
       return res.json(alert);
     } catch (error) {
       return next(error);
@@ -247,9 +257,10 @@ export function createApp({
     try {
       const { status } = req.body ?? {};
       if (typeof status !== 'string') return res.status(400).json({ error: 'status is required.' });
-      const incident = incidents.transition(req.params.id, status, req.user?.id || 'local-operator');
+      const incident = incidents.prepareTransition(req.params.id, status, req.user?.id || 'local-operator');
       if (!incident) return res.status(404).json({ error: 'Incident not found.' });
       await persistence?.persistIncident(incident, 'incident.status_changed');
+      incidents.commit(incident);
       return res.json(incident);
     } catch (error) {
       return next(error);
@@ -259,8 +270,8 @@ export function createApp({
   app.post('/api/scenarios', operatorOnly, async (req, res, next) => {
     try {
       const result = createScenario(engine.getSnapshot(), req.body ?? {});
-      engine.setScenario(result.scenario);
       await persistence?.persistScenario(result);
+      engine.setScenario(result.scenario);
       return res.status(201).json(result);
     } catch (error) {
       return next(error);
@@ -324,7 +335,7 @@ export function createApp({
 
   app.use((error, _req, res, _next) => {
     const status = Number.isInteger(error.status) ? error.status : 500;
-    if (status >= 500) logger.error('API request failed', { reason: error.message, path: _req.path });
+    if (status >= 500) logger.error('API request failed', { reason: sanitizeMongoError(error), path: _req.path });
     res.status(status).json({
       error: status >= 500 ? 'An internal server error occurred.' : error.message,
     });

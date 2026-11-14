@@ -8,12 +8,47 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      MONGO_TEST_URI: mongodb://127.0.0.1:27017/gridpulse_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run test:integration
       - run: npm run build
+      - run: npm audit --audit-level=moderate
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify app with Compose MongoDB
+        run: |
+          set -euo pipefail
+          export JWT_SECRET="$(openssl rand -hex 32)"
+          export ADMIN_BOOTSTRAP_SECRET="$(openssl rand -hex 32)"
+          trap 'docker compose down --volumes' EXIT
+          docker compose config
+          docker compose up --build -d
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4000/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1

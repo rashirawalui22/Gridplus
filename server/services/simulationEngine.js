@@ -41,7 +41,6 @@ export class SimulationEngine extends EventEmitter {
 
   reset() {
     this.scenario = null;
-    this.sequence = 0;
     this.faults = [];
     this.alerts = [];
     this.activeFaults.clear();

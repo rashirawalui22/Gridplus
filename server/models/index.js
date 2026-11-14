@@ -90,6 +90,7 @@ const scenarioSchema = new Schema({
 }, { timestamps: true });
 
 const auditLogSchema = new Schema({
+  eventId: { type: String, required: true, unique: true, sparse: true, immutable: true },
   actor: { type: String, required: true, immutable: true },
   action: { type: String, required: true, immutable: true, index: true },
   entityId: { type: String, required: true, immutable: true, index: true },
@@ -108,6 +109,13 @@ const revokedTokenSchema = new Schema({
 }, { timestamps: true });
 revokedTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
+const bootstrapStateSchema = new Schema({
+  key: { type: String, required: true, unique: true, immutable: true },
+  claimId: { type: String, required: true, unique: true, immutable: true },
+  userEmail: { type: String, required: true, immutable: true },
+  usedAt: { type: Date, required: true, immutable: true },
+}, { timestamps: true });
+
 function getModel(name, schema) {
   return mongoose.models[name] || mongoose.model(name, schema);
 }
@@ -123,3 +131,4 @@ export const SimulationScenario = getModel('SimulationScenario', scenarioSchema)
 export const AuditLog = getModel('AuditLog', auditLogSchema);
 export const SimulationConfiguration = getModel('SimulationConfiguration', simulationConfigSchema);
 export const RevokedToken = getModel('RevokedToken', revokedTokenSchema);
+export const BootstrapState = getModel('BootstrapState', bootstrapStateSchema);

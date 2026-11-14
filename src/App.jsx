@@ -440,6 +440,7 @@ function AuthScreen({ onAuthenticated }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [bootstrapSecret, setBootstrapSecret] = useState('');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
 
@@ -448,10 +449,12 @@ function AuthScreen({ onAuthenticated }) {
     setWorking(true);
     setError('');
     try {
+      const body = { name, email, password };
+      if (mode === 'bootstrap-admin') body.bootstrapSecret = bootstrapSecret;
       const result = await requestJson(`/api/auth/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify(body),
       });
       onAuthenticated(result);
     } catch (requestError) {
@@ -468,18 +471,23 @@ function AuthScreen({ onAuthenticated }) {
           <div className="rounded-lg bg-cyan-400/10 p-2 text-cyan-300"><Activity size={20} /></div>
           <div><div className="font-semibold tracking-wide">GRIDPULSE</div><div className="text-xs text-slate-500">Secure operator access</div></div>
         </div>
-        <h1 className="text-lg font-semibold">{mode === 'login' ? 'Sign in' : 'Create a viewer account'}</h1>
+        <h1 className="text-lg font-semibold">{mode === 'login' ? 'Sign in' : mode === 'register' ? 'Create a viewer account' : 'Provision the first administrator'}</h1>
         <form onSubmit={submit} className="mt-4 space-y-3">
-          {mode === 'register' && <label className="block text-xs text-slate-400">Name<input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" /></label>}
+          {mode !== 'login' && <label className="block text-xs text-slate-400">Name<input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" /></label>}
           <label className="block text-xs text-slate-400">Email<input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" /></label>
           <label className="block text-xs text-slate-400">Password<input required type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={10} value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" /></label>
+          {mode === 'bootstrap-admin' && <label className="block text-xs text-slate-400">One-time administrator bootstrap secret<input required type="password" autoComplete="off" value={bootstrapSecret} onChange={(event) => setBootstrapSecret(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100" /></label>}
           {error && <div role="alert" className="rounded-md border border-rose-900 bg-rose-950/30 p-2 text-xs text-rose-200">{error}</div>}
-          <button disabled={working} className="w-full rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">{working ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Register'}</button>
+          <button disabled={working} className="w-full rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">{working ? 'Please wait…' : mode === 'login' ? 'Sign in' : mode === 'register' ? 'Register' : 'Create administrator'}</button>
         </form>
-        <button onClick={() => { setError(''); setMode(mode === 'login' ? 'register' : 'login'); }} className="mt-4 text-xs text-cyan-300 hover:text-cyan-200">
-          {mode === 'login' ? 'Need an account? Register' : 'Already registered? Sign in'}
-        </button>
+        <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2">
+          <button onClick={() => { setError(''); setMode(mode === 'login' ? 'register' : 'login'); }} className="text-xs text-cyan-300 hover:text-cyan-200">
+            {mode === 'login' ? 'Need an account? Register' : 'Already registered? Sign in'}
+          </button>
+          {mode !== 'bootstrap-admin' && <button onClick={() => { setError(''); setMode('bootstrap-admin'); }} className="text-xs text-cyan-300 hover:text-cyan-200">Provision first administrator</button>}
+        </div>
         {mode === 'register' && <p className="mt-3 text-[11px] text-slate-500">New accounts receive viewer access. An administrator must grant operator or admin privileges.</p>}
+        {mode === 'bootstrap-admin' && <p className="mt-3 text-[11px] text-slate-500">Use the one-time secret configured on the server. This operation is available only once per database.</p>}
       </div>
     </div>
   );
